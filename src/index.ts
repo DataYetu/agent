@@ -16,7 +16,20 @@ async function main(): Promise<void> {
   const orchestrator = new Orchestrator({
     bot,
     validatorTimeoutMs: config.runtime.validatorTimeoutMs,
+    llm: {
+      enabled: config.llm.enabled,
+      baseUrl: config.llm.baseUrl,
+      apiKey: config.llm.apiKey,
+      model: config.llm.model,
+      confidence: config.llm.confidence,
+    },
   });
+  if (config.llm.enabled) {
+    console.log(`[llm] fallback enabled model=${config.llm.model}`);
+  }
+  if (config.croo.providerFundAddress) {
+    console.log(`[croo] PROVIDER_FUND_ADDRESS set (${config.croo.providerFundAddress})`);
+  }
 
   // 3. CAP provider — listens for orders and settles via CROO
   const client = createCrooClient(config);

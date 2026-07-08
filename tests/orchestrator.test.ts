@@ -57,7 +57,7 @@ test("handleQuery dispatches and resolves with a validator reply", async () => {
   assert.ok((task.latency_ms ?? 0) >= 0);
 });
 
-test("handleQuery throws NO_VALIDATOR_RESPONSE on timeout", async () => {
+test("handleQuery throws NO_VALIDATOR_RESPONSE on timeout without LLM", async () => {
   const orch = new Orchestrator({
     bot: fakeBot({ reply: false }),
     validatorTimeoutMs: 30,
@@ -76,6 +76,43 @@ test("handleQuery throws NO_VALIDATOR_RESPONSE on timeout", async () => {
       return true;
     },
   );
+});
+
+test("handleQuery uses LLM fallback when configured and humans time out", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "Yes, prices rose | 0.7" } }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+
+  try {
+    const orch = new Orchestrator({
+      bot: fakeBot({ reply: false }),
+      validatorTimeoutMs: 30,
+      llm: {
+        enabled: true,
+        baseUrl: "https://example.test/v1",
+        apiKey: "test",
+        model: "demo-model",
+        confidence: 0.65,
+      },
+    });
+
+    const { validator } = await orch.handleQuery({
+      query: "Is maize up?",
+      caller_type: "human",
+      max_price: 0.05,
+    });
+
+    assert.equal(validator.answer, "Yes, prices rose");
+    assert.equal(validator.confidence, 0.65);
+    assert.equal(validator.validator_id, "llm:demo-model");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("handleQuery throws INTERNAL_ERROR when dispatch fails", async () => {

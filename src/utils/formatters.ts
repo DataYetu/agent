@@ -37,7 +37,7 @@ export function buildSuccessResponse(
         {
           id: validator.validator_id,
           confidence,
-          platform: "telegram",
+          platform: validator.validator_id.startsWith("llm:") ? "llm" : "telegram",
         },
       ],
       metadata: {
@@ -85,7 +85,7 @@ export function buildDeliveryPayload(
       {
         id: validator.validator_id,
         confidence: clampConfidence(validator.confidence),
-        platform: "telegram",
+        platform: validator.validator_id.startsWith("llm:") ? "llm" : "telegram",
       },
     ],
     task_id: task.task_id,

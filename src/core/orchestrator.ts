@@ -7,10 +7,15 @@ import type {
 } from "../types/index.js";
 import { taskStore } from "../utils/taskStore.js";
 import type { ValidatorBot } from "../telegram/bot.js";
+import {
+  askLlmFallback,
+  type LlmFallbackConfig,
+} from "../utils/llmFallback.js";
 
 export interface OrchestratorOptions {
   bot: ValidatorBot;
   validatorTimeoutMs: number;
+  llm?: LlmFallbackConfig;
 }
 
 export interface HandleQueryInput {
@@ -41,9 +46,8 @@ export interface ValidatedTask {
 
 /**
  * The core engine. Registers a task, dispatches it to the human validator
- * network, and resolves once a validator replies (or fails on timeout).
- * CAP delivery + settlement are handled by the caller (the provider module or
- * the dev endpoint) using the returned task + validator response.
+ * network, and resolves once a validator replies. On timeout, optionally falls
+ * back to a controlled LLM so paid orders still complete for demo/SLA safety.
  */
 export class Orchestrator {
   constructor(private readonly opts: OrchestratorOptions) {}
@@ -94,19 +98,7 @@ export class Orchestrator {
         this.opts.validatorTimeoutMs,
       );
     } catch {
-      taskStore.update(taskId, {
-        status: "TIMEOUT",
-        error: {
-          code: "NO_VALIDATOR_RESPONSE",
-          message: "No validator responded within the configured timeout window.",
-        },
-      });
-      throw new OrchestratorError(
-        "NO_VALIDATOR_RESPONSE",
-        "No validator responded within the configured timeout window.",
-        taskId,
-        input.order_id,
-      );
+      validator = await this.fallbackToLlm(taskId, input.query, input.order_id);
     }
 
     const latencyMs = Date.now() - dispatchedAt;
@@ -118,5 +110,58 @@ export class Orchestrator {
     });
 
     return { task: updated ?? task, validator };
+  }
+
+  private async fallbackToLlm(
+    taskId: string,
+    query: string,
+    orderId?: string,
+  ): Promise<ValidatorResponse> {
+    const llm = this.opts.llm;
+    if (!llm?.enabled) {
+      taskStore.update(taskId, {
+        status: "TIMEOUT",
+        error: {
+          code: "NO_VALIDATOR_RESPONSE",
+          message: "No validator responded within the configured timeout window.",
+        },
+      });
+      throw new OrchestratorError(
+        "NO_VALIDATOR_RESPONSE",
+        "No validator responded within the configured timeout window.",
+        taskId,
+        orderId,
+      );
+    }
+
+    console.warn(`[orchestrator] human timeout for ${taskId}; using LLM fallback`);
+    try {
+      const llmAnswer = await askLlmFallback(query, llm);
+      const validator: ValidatorResponse = {
+        task_id: taskId,
+        answer: llmAnswer.answer,
+        confidence: llmAnswer.confidence,
+        validator_id: `llm:${llmAnswer.model}`,
+        validator_username: "llm_fallback",
+        raw_message: llmAnswer.raw,
+        received_at: new Date().toISOString(),
+        message_id: 0,
+      };
+      return validator;
+    } catch (err) {
+      taskStore.update(taskId, {
+        status: "TIMEOUT",
+        error: {
+          code: "NO_VALIDATOR_RESPONSE",
+          message: `Human timeout and LLM fallback failed: ${(err as Error).message}`,
+        },
+      });
+      throw new OrchestratorError(
+        "NO_VALIDATOR_RESPONSE",
+        `Human timeout and LLM fallback failed: ${(err as Error).message}`,
+        taskId,
+        orderId,
+      );
+    }
   }
 }

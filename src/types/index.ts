@@ -97,7 +97,7 @@ export interface PaymentMetadata {
 export interface ValidatorAttribution {
   id: string;
   confidence: number;
-  platform: "telegram";
+  platform: "telegram" | "llm";
 }
 
 export interface ResponseData {

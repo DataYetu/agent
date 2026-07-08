@@ -67,7 +67,9 @@ export class CrooProvider {
         return;
       }
 
-      const result = await this.client.acceptNegotiation(negotiationId);
+      // Prefer plain accept; if CROO says this is a fund service, retry with AA wallet.
+      const result = await this.acceptNegotiationSmart(negotiationId);
+
       const orderId = result.order?.orderId;
       if (orderId) {
         this.orderQueries.set(orderId, {
@@ -161,6 +163,32 @@ export class CrooProvider {
       await this.client.rejectOrder(orderId, reason);
     } catch (err) {
       console.error(`[croo] rejectOrder failed for ${orderId}:`, (err as Error).message);
+    }
+  }
+
+  private async acceptNegotiationSmart(negotiationId: string) {
+    try {
+      return await this.client.acceptNegotiation(negotiationId);
+    } catch (err) {
+      const message = (err as Error).message ?? "";
+      const needsFund =
+        /provider_fund_address/i.test(message) ||
+        /fund service/i.test(message) ||
+        /require_fund_transfer/i.test(message);
+      if (!needsFund) throw err;
+
+      const fundAddress = this.config.croo.providerFundAddress;
+      if (!fundAddress) {
+        throw new Error(
+          `${message}. Set PROVIDER_FUND_ADDRESS to the agent AA wallet ` +
+            `(CROO Dashboard → Configure), or turn OFF "Require Fund Transfer" ` +
+            `for this oracle service.`,
+        );
+      }
+      console.log(
+        `[croo] fund-service accept for ${negotiationId}; providerFundAddress=${fundAddress}`,
+      );
+      return this.client.acceptNegotiationWithFundAddress(negotiationId, fundAddress);
     }
   }
 
