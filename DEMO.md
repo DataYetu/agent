@@ -1,17 +1,34 @@
 # Demo runbook — H2A + A2A (≤2 days)
 
-## Why Telegram never got the last Explorer order
+## Troubleshooting Telegram / duplicate runtimes
 
-ECS logs show negotiation was received and `query` was present, but accept failed:
+### Symptom: order paid (green) but no Telegram task
 
-`provider_fund_address is required for fund services`
+Check CloudWatch (`/ecs/datayetu-agent-prod`) for:
 
-Bot was **not** paused. CROO “Order confirmed” on the Explorer UI can mean the buyer paid/submitted while the **provider accept** still failed—so no `OrderPaid` → no Telegram dispatch.
+| Log | Meaning |
+|-----|---------|
+| `provider_fund_address is required` | Accept failed — no `OrderPaid` → no dispatch. Set `PROVIDER_FUND_ADDRESS` or turn off fund transfer. |
+| `dispatching to validators` then `NO_VALIDATOR_RESPONSE` | Task was posted (or dispatch hung) but **no validator reply** within `VALIDATOR_TIMEOUT_MS` (default 3 min). |
+| `ETELEGRAM: 409 Conflict` | **Another process** is polling `@DataYetuBot` with the same token — replies are lost even if sends work. |
+| `websocket policy violation (duplicate key)` | **Another process** holds the same `CROO_SDK_KEY` WebSocket — orders/events may go to the wrong runtime. |
 
-### Fix (pick one)
+**Only one runtime** may use the provider SDK key + Telegram bot token:
 
-1. **Recommended for an oracle:** CROO Dashboard → service → turn **OFF “Require Fund Transfer”**. Oracle sells answers (USDC fee), not a principal transfer.
-2. **Or** keep fund-transfer ON and set `PROVIDER_FUND_ADDRESS` to the provider agent **AA wallet** (Dashboard → Configure), then redeploy.
+1. **ECS** `datayetu-agent-prod` (desired count = 1) — this is production.
+2. Stop any local `npm run dev` / Docker on your laptop.
+3. CROO Dashboard → if a **hosted deployment** exists for this agent, keep it **paused** (or delete). Do not run hosted + ECS together.
+4. After deploy, logs should show `closed other bot sessions` and **no** repeating 409 errors.
+
+Quick Telegram probe (from a machine with `.env`):
+
+```bash
+curl -sS -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+  -H "Content-Type: application/json" \
+  -d "{\"chat_id\":\"$TELEGRAM_GROUP_ID\",\"text\":\"probe\"}"
+```
+
+If that works but ECS orders still fail, the duplicate-runtime issue is almost certainly the cause.
 
 ---
 

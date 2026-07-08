@@ -8,9 +8,9 @@ import { createApp } from "./api/agent.js";
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  // 1. Human validator network
+  // 1. Human validator network (evicts duplicate pollers before listening)
   const bot = new ValidatorBot(config.telegram);
-  bot.start();
+  await bot.start();
 
   // 2. Core engine
   const orchestrator = new Orchestrator({
@@ -38,8 +38,9 @@ async function main(): Promise<void> {
 
   // 4. HTTP surface (health + optional dev endpoint)
   const app = createApp(orchestrator, config);
+  const instanceId = process.env.HOSTNAME ?? process.env.ECS_CONTAINER_METADATA_URI ?? "local";
   const server = app.listen(config.runtime.port, () => {
-    console.log(`[api] listening on :${config.runtime.port}`);
+    console.log(`[api] listening on :${config.runtime.port} (instance=${instanceId})`);
     console.log("datayetu-agent is live — awaiting CAP orders");
   });
 
