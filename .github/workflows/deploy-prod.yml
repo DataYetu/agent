@@ -1,0 +1,51 @@
+name: Deploy Agent (prod)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - ".github/workflows/deploy-prod.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-agent-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Deploy to ECS Fargate
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'datayetu' }}
+          ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
+          ECS_TASK_SG: ${{ vars.ECS_TASK_SG }}
+          ECS_EXECUTION_ROLE_ARN: ${{ vars.ECS_EXECUTION_ROLE_ARN }}
+          ECS_TASK_ROLE_ARN: ${{ vars.ECS_TASK_ROLE_ARN }}
+          ECS_ASSIGN_PUBLIC_IP: ${{ vars.ECS_ASSIGN_PUBLIC_IP || 'ENABLED' }}
+          AGENT_SERVICE_NAME: ${{ vars.AGENT_SERVICE_NAME || 'datayetu-agent-prod' }}
+          AGENT_SECRET_NAME: ${{ vars.AGENT_SECRET_NAME || 'datayetu/prod/agent' }}
+          AGENT_DESIRED_COUNT: ${{ vars.AGENT_DESIRED_COUNT || '1' }}
+          IMAGE_TAG: ${{ github.sha }}
+          SKIP_SECRET_UPLOAD: "1"
+        run: |
+          chmod +x scripts/deploy-ecs.sh
+          ./scripts/deploy-ecs.sh

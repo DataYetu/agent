@@ -70,6 +70,78 @@ On boot the agent:
 2. connects to CAP and listens for negotiations/orders,
 3. exposes `GET /health` (and `POST /agent/query` if `ENABLE_DEV_ENDPOINT=true`).
 
+## Deploy 24/7 (production)
+
+This agent is a long-running worker process (not a serverless function). For
+always-on runtime, deploy it as a persistent container on any worker-friendly
+platform (Railway, Render background worker, Fly.io, Cloud Run jobs with
+continuous process, VPS + systemd, etc.).
+
+### Build and run with Docker
+
+```bash
+cd agent
+docker build -t datayetu-agent .
+docker run --env-file .env --name datayetu-agent --restart unless-stopped datayetu-agent
+```
+
+### Recommended: Docker Compose (24/7 with healthcheck)
+
+```bash
+cd agent
+docker compose up -d --build
+docker compose ps
+docker compose logs -f
+```
+
+Update / restart:
+
+```bash
+cd agent
+docker compose pull || true
+docker compose up -d --build
+```
+
+Required runtime env vars:
+- `CROO_API_URL`
+- `CROO_WS_URL`
+- `CROO_SDK_KEY`
+- `CROO_SERVICE_ID`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_GROUP_ID`
+- `SERVICE_PRICE`
+- `SERVICE_CURRENCY`
+- `VALIDATOR_TIMEOUT_MS`
+- `BASE_RPC_URL` (optional)
+
+Production notes:
+- Keep exactly one active runtime per `CROO_SDK_KEY` (CROO allows one active WS connection per key).
+- Fund the agent AA wallet with USDC on Base before accepting paid orders.
+- Use process restarts/health checks from your host for resilience.
+- For real 24/7 availability, run this on an always-on host (VPS or cloud worker), not your laptop.
+
+### CI/CD (GitHub Actions → ECS, no local Docker)
+
+Deploy remotely on every push to `main` (or manually via **Actions → Deploy Agent (prod)**).
+
+**One-time setup**
+
+1. In GitHub repo **Settings → Secrets and variables → Actions**:
+   - **Secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `CROO_SDK_KEY`, `TELEGRAM_BOT_TOKEN`, plus `CROO_API_URL`, `CROO_WS_URL`, `CROO_SERVICE_ID`, `TELEGRAM_GROUP_ID`
+   - **Variables:** `ECS_SUBNETS`, `ECS_TASK_SG`, `ECS_EXECUTION_ROLE_ARN`, `ECS_TASK_ROLE_ARN` (same values as DataYetu API infra)
+2. Run workflow **Sync Agent Secrets (AWS)** once — copies runtime secrets into AWS Secrets Manager (`datayetu/prod/agent`).
+3. Push to `main` — workflow builds the Docker image on GitHub runners, pushes to ECR, and updates ECS service `datayetu-agent-prod`.
+
+**Manual deploy from laptop (optional)**
+
+```bash
+chmod +x scripts/deploy-ecs.sh
+SKIP_SECRET_UPLOAD=1 IMAGE_TAG=$(git rev-parse HEAD) \
+  ECS_SUBNETS=subnet-xxx,subnet-yyy ECS_TASK_SG=sg-xxx \
+  ECS_EXECUTION_ROLE_ARN=arn:aws:iam::... ECS_TASK_ROLE_ARN=arn:aws:iam::... \
+  ./scripts/deploy-ecs.sh
+```
+
 ## Order lifecycle
 
 | CAP event | Agent action |
@@ -151,6 +223,17 @@ curl -X POST http://localhost:3000/agent/query \
 
 This exercises the Telegram loop and returns a structured response with
 `payment.status: "pending"` (real settlement requires the CAP path).
+
+## Testing strategy (recommended)
+
+1. **Local CAP-connected test first**  
+   Run `npm run build && npm start` (or Docker locally), then place a real CROO
+   order against your service from Navigator/requester. This validates
+   negotiation, pay, deliver, and settlement end-to-end with easier debugging.
+
+2. **Then test in production runtime**  
+   After deploying 24/7, place another paid order and verify logs + CROO order
+   completion. This confirms your hosted runtime remains stable.
 
 ## Tests
 

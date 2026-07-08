@@ -59,6 +59,11 @@ export class TaskStore {
   has(taskId: string): boolean {
     return this.tasks.has(taskId);
   }
+
+  /** Task ids currently awaiting a validator reply. */
+  pendingIds(): string[] {
+    return [...this.pending.keys()];
+  }
 }
 
 export const taskStore = new TaskStore();

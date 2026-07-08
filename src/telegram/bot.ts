@@ -41,17 +41,34 @@ export class ValidatorBot {
 
   private handleMessage(msg: TelegramBot.Message): void {
     const text = msg.text;
+    // Debug: observe every update the bot actually receives.
+    console.log(
+      `[telegram][debug] msg chat=${msg.chat?.id} from=${msg.from?.id} isReply=${Boolean(
+        msg.reply_to_message,
+      )} text=${JSON.stringify(text)}`,
+    );
     if (!text) return;
 
-    // Only consider replies to the bot's own task messages.
-    const repliedText = msg.reply_to_message?.text;
-    const taskId = extractTaskId(repliedText);
-    if (!taskId) return;
-
     const parsed = parseValidatorReply(text);
-    if (!parsed) {
-      console.warn(`[telegram] ignoring malformed reply for task ${taskId}`);
-      return;
+    if (!parsed) return;
+
+    // Primary correlation: reply to the bot's task message (carries TASK_ID).
+    let taskId = extractTaskId(msg.reply_to_message?.text);
+
+    // Fallback: a plain, well-formed answer with exactly one task outstanding.
+    if (!taskId) {
+      const pending = taskStore.pendingIds();
+      if (pending.length === 1) {
+        taskId = pending[0];
+        console.log(`[telegram] matched plain reply to sole pending task ${taskId}`);
+      } else if (pending.length === 0) {
+        return;
+      } else {
+        console.warn(
+          `[telegram] ${pending.length} tasks pending; reply to a task message to disambiguate`,
+        );
+        return;
+      }
     }
 
     if (!taskStore.has(taskId)) {

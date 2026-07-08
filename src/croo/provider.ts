@@ -48,12 +48,12 @@ export class CrooProvider {
 
     try {
       const negotiation = await this.client.getNegotiation(negotiationId);
-      const parsed = this.parseRequirements(negotiation.requirements);
+      const parsed = this.extractQueryRequest(negotiation);
 
       if (!parsed) {
         await this.client.rejectNegotiation(
           negotiationId,
-          "Invalid or missing requirements payload",
+          "Missing query payload (expected requirements or metadata)",
         );
         return;
       }
@@ -147,7 +147,7 @@ export class CrooProvider {
       const order = await this.client.getOrder(orderId);
       if (order.negotiationId) {
         const negotiation = await this.client.getNegotiation(order.negotiationId);
-        const parsed = this.parseRequirements(negotiation.requirements);
+        const parsed = this.extractQueryRequest(negotiation);
         if (parsed) return { ...parsed, order_id: orderId, negotiation_id: order.negotiationId };
       }
     } catch (err) {
@@ -164,14 +164,69 @@ export class CrooProvider {
     }
   }
 
-  private parseRequirements(requirements: string | undefined): QueryRequest | null {
-    if (!requirements) return null;
+  private extractQueryRequest(negotiation: {
+    requirements?: string;
+    metadata?: string;
+    requesterAgentId?: string;
+  }): QueryRequest | null {
+    const fromRequirements = this.parseRequirementsPayload(
+      negotiation.requirements,
+      negotiation.requesterAgentId,
+    );
+    if (fromRequirements) return fromRequirements;
+
+    const fromMetadata = this.parseRequirementsPayload(
+      negotiation.metadata,
+      negotiation.requesterAgentId,
+    );
+    if (fromMetadata) return fromMetadata;
+
+    return null;
+  }
+
+  private parseRequirementsPayload(
+    payload: string | undefined,
+    requesterAgentId?: string,
+  ): QueryRequest | null {
+    if (!payload || payload.trim() === "") return null;
+
+    const rawText = payload.trim();
     try {
-      const raw = JSON.parse(requirements) as unknown;
+      const raw = JSON.parse(rawText) as unknown;
       const result = QueryRequestSchema.safeParse(raw);
-      return result.success ? result.data : null;
-    } catch {
+      if (result.success) return result.data;
+
+      // Human-facing CROO surfaces may send looser JSON; map common keys.
+      if (raw && typeof raw === "object") {
+        const obj = raw as Record<string, unknown>;
+        const queryCandidate =
+          (typeof obj.query === "string" && obj.query) ||
+          (typeof obj.prompt === "string" && obj.prompt) ||
+          (typeof obj.task === "string" && obj.task) ||
+          (typeof obj.message === "string" && obj.message);
+
+        if (queryCandidate && queryCandidate.trim() !== "") {
+          return {
+            query: queryCandidate.trim(),
+            max_price:
+              typeof obj.max_price === "number"
+                ? obj.max_price
+                : this.config.runtime.servicePrice,
+            caller_type: "human",
+            ...(requesterAgentId ? { caller_id: requesterAgentId } : {}),
+          };
+        }
+      }
+
       return null;
+    } catch {
+      // Treat non-JSON payloads as direct human queries.
+      return {
+        query: rawText,
+        max_price: this.config.runtime.servicePrice,
+        caller_type: "human",
+        ...(requesterAgentId ? { caller_id: requesterAgentId } : {}),
+      };
     }
   }
 }
