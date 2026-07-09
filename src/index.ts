@@ -44,14 +44,14 @@ async function main(): Promise<void> {
     console.log("datayetu-agent is live — awaiting CAP orders");
   });
 
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log("\nshutting down...");
-    bot.stop();
+    await bot.stop();
     server.close();
     process.exit(0);
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
 }
 
 main().catch((err) => {

@@ -83,6 +83,7 @@ stream.on(EventType.OrderCompleted, async (e) => {
 
 stream.on(EventType.OrderRejected, (e) => {
   if (activeNegotiationId && e.negotiation_id && e.negotiation_id !== activeNegotiationId) {
+    console.log(`[a2a] ignoring stale rejection for order ${e.order_id}`);
     return;
   }
   console.error(`[a2a] order rejected: ${e.order_id} ${e.reason ?? ""}`);

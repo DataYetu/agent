@@ -149,6 +149,7 @@ export class CrooProvider {
       await this.safeRejectOrder(orderId, reason);
     } finally {
       this.orderQueries.delete(orderId);
+      this.orchestrator.clearEscrow(orderId);
     }
   }
 

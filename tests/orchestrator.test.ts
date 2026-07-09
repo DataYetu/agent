@@ -175,6 +175,43 @@ test("handleQuery reuses standby reply captured before order_paid", async () => 
   assert.equal(task.latency_ms, 0);
 });
 
+test("handleQuery bridges standby reply stashed after wait registration starts", async () => {
+  const now = new Date().toISOString();
+  let consumeCalls = 0;
+  const bot = {
+    hasEscrowPreview: () => true,
+    clearEscrowPreview() {},
+    consumeEscrowReply(_orderId: string, taskId: string) {
+      consumeCalls += 1;
+      if (consumeCalls === 1) return null;
+      return {
+        task_id: taskId,
+        answer: "Bridged late",
+        confidence: 0.9,
+        validator_id: "42",
+        raw_message: "Bridged late | 0.9",
+        received_at: now,
+        message_id: 3,
+      };
+    },
+    async dispatchTask(): Promise<number> {
+      throw new Error("dispatch should not happen when standby preview exists");
+    },
+  } as unknown as ValidatorBot;
+
+  const orch = new Orchestrator({ bot, validatorTimeoutMs: 1000 });
+  const { task, validator } = await orch.handleQuery({
+    query: "Is maize up?",
+    caller_type: "agent",
+    caller_id: "did:croo:agent:test",
+    max_price: 0.1,
+    order_id: "ord_bridge",
+  });
+
+  assert.equal(task.status, "VALIDATED");
+  assert.equal(validator.answer, "Bridged late");
+});
+
 test("handleQuery skips duplicate task message when standby preview was sent", async () => {
   let dispatched = false;
   const bot = {

@@ -11,6 +11,7 @@ import {
 export interface TelegramConfig {
   botToken: string;
   groupId: string;
+  evictOnStart?: boolean;
 }
 
 /**
@@ -22,6 +23,7 @@ export class ValidatorBot {
   private bot: TelegramBot;
   private readonly botToken: string;
   private readonly groupId: string;
+  private readonly evictOnStart: boolean;
   private pollingRestartTimer?: NodeJS.Timeout;
   private pollingConflictLogged = false;
   private readonly pendingEscrowReplies = new Map<
@@ -33,12 +35,21 @@ export class ValidatorBot {
   constructor(config: TelegramConfig) {
     this.botToken = config.botToken;
     this.groupId = config.groupId;
+    this.evictOnStart = config.evictOnStart ?? false;
     // Polling starts in start() after evicting other bot sessions (409 fix).
     this.bot = new TelegramBot(config.botToken, { polling: false });
   }
 
   async start(): Promise<void> {
-    await this.evictConflictingSessions();
+    if (this.evictOnStart) {
+      await this.evictConflictingSessions();
+    } else {
+      try {
+        await this.telegramApi("deleteWebhook", { drop_pending_updates: true });
+      } catch (err) {
+        console.warn("[telegram] deleteWebhook:", (err as Error).message);
+      }
+    }
     await this.bot.startPolling({ restart: true });
     this.bot.on("message", (msg) => this.handleMessage(msg));
     this.bot.on("polling_error", (err) => this.handlePollingError(err));
@@ -185,18 +196,18 @@ export class ValidatorBot {
       );
     }
 
-    // One slow retry only; avoid hammering close() (Telegram rate-limits hard).
+    // One retry without close() — close() during deploy overlap often worsens 409s.
     if (this.pollingRestartTimer) return;
     this.pollingRestartTimer = setTimeout(() => {
       this.pollingRestartTimer = undefined;
       void this.restartPollingAfterConflict();
-    }, 120_000);
+    }, 15_000);
   }
 
   private async restartPollingAfterConflict(): Promise<void> {
     try {
       await this.bot.stopPolling();
-      await this.evictConflictingSessions();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
       await this.bot.startPolling({ restart: true });
       console.log("[telegram] polling restarted after 409 conflict");
     } catch (err) {
@@ -243,19 +254,24 @@ export class ValidatorBot {
     const standbyOrderId = extractOrderId(msg.reply_to_message?.text);
     if (!taskId && standbyOrderId) {
       this.stashStandbyReply(standbyOrderId, parsed, msg);
-      console.log(
-        `[telegram] captured standby reply for order ${standbyOrderId} from ${msg.from?.id ?? "unknown"}`,
-      );
       return;
     }
 
-    if (!taskId && this.activePreviewOrderIds.size === 1) {
-      const [onlyOrderId] = this.activePreviewOrderIds;
-      this.stashStandbyReply(onlyOrderId, parsed, msg);
-      console.log(
-        `[telegram] captured plain early reply for sole standby order ${onlyOrderId}`,
-      );
-      return;
+    if (!taskId && this.activePreviewOrderIds.size > 0) {
+      for (const orderId of this.activePreviewOrderIds) {
+        if (taskStore.pendingTaskIdForOrder(orderId)) {
+          this.stashStandbyReply(orderId, parsed, msg);
+          return;
+        }
+      }
+      if (this.activePreviewOrderIds.size === 1) {
+        const [onlyOrderId] = this.activePreviewOrderIds;
+        this.stashStandbyReply(onlyOrderId, parsed, msg);
+        console.log(
+          `[telegram] captured plain early reply for sole standby order ${onlyOrderId}`,
+        );
+        return;
+      }
     }
 
     // Fallback: a plain, well-formed answer with exactly one task outstanding.
@@ -298,11 +314,11 @@ export class ValidatorBot {
     }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.pollingRestartTimer) {
       clearTimeout(this.pollingRestartTimer);
       this.pollingRestartTimer = undefined;
     }
-    void this.bot.stopPolling();
+    await this.bot.stopPolling();
   }
 }

@@ -26,6 +26,8 @@ export interface AppConfig {
   telegram: {
     botToken: string;
     groupId: string;
+    /** If true, call Telegram close() on boot to evict other pollers (can rate-limit). */
+    evictOnStart: boolean;
   };
   runtime: {
     validatorTimeoutMs: number;
@@ -61,6 +63,7 @@ export function loadConfig(): AppConfig {
     telegram: {
       botToken: required("TELEGRAM_BOT_TOKEN"),
       groupId: required("TELEGRAM_GROUP_ID"),
+      evictOnStart: optional("TELEGRAM_EVICT_ON_START", "false") === "true",
     },
     runtime: {
       // 3 minutes by default — humans need breathing room; LLM covers timeouts.

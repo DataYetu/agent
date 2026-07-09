@@ -56,6 +56,10 @@ export class Orchestrator {
     await this.opts.bot.notifyEscrowPending(orderId, query);
   }
 
+  clearEscrow(orderId: string): void {
+    this.opts.bot.clearEscrowPreview?.(orderId);
+  }
+
   async handleQuery(input: HandleQueryInput): Promise<ValidatedTask> {
     const now = new Date().toISOString();
     const taskId = `task_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
@@ -123,12 +127,25 @@ export class Orchestrator {
       dispatched_at: new Date().toISOString(),
     });
 
+    const validatorPromise = taskStore.waitForValidator(
+      taskId,
+      this.opts.validatorTimeoutMs,
+    );
+
+    // Bridge standby replies that landed after the first consumeEscrowReply check.
+    if (input.order_id && this.opts.bot.consumeEscrowReply) {
+      const bridged = this.opts.bot.consumeEscrowReply(input.order_id, taskId);
+      if (bridged) {
+        taskStore.resolveValidator(bridged);
+        console.log(
+          `[orchestrator] bridged standby reply for order ${input.order_id} (task ${taskId})`,
+        );
+      }
+    }
+
     let validator: ValidatorResponse;
     try {
-      validator = await taskStore.waitForValidator(
-        taskId,
-        this.opts.validatorTimeoutMs,
-      );
+      validator = await validatorPromise;
     } catch {
       validator = await this.fallbackToLlm(taskId, input.query, input.order_id);
     }
