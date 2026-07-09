@@ -74,10 +74,49 @@ export class ValidatorBot {
    */
   consumeEscrowReply(orderId: string, taskId: string): ValidatorResponse | null {
     const captured = this.pendingEscrowReplies.get(orderId);
-    this.activePreviewOrderIds.delete(orderId);
     if (!captured) return null;
     this.pendingEscrowReplies.delete(orderId);
+    this.activePreviewOrderIds.delete(orderId);
     return { task_id: taskId, ...captured };
+  }
+
+  hasEscrowPreview(orderId: string): boolean {
+    return this.activePreviewOrderIds.has(orderId);
+  }
+
+  clearEscrowPreview(orderId: string): void {
+    this.activePreviewOrderIds.delete(orderId);
+    this.pendingEscrowReplies.delete(orderId);
+  }
+
+  private stashStandbyReply(
+    orderId: string,
+    parsed: { answer: string; confidence: number },
+    msg: TelegramBot.Message,
+  ): void {
+    const response: Omit<ValidatorResponse, "task_id"> = {
+      answer: parsed.answer,
+      confidence: parsed.confidence,
+      validator_id: String(msg.from?.id ?? "unknown"),
+      validator_username: msg.from?.username ?? null,
+      raw_message: msg.text ?? "",
+      received_at: new Date().toISOString(),
+      message_id: msg.message_id,
+    };
+
+    const pendingTaskId = taskStore.pendingTaskIdForOrder(orderId);
+    if (pendingTaskId) {
+      const resolved = taskStore.resolveValidator({ task_id: pendingTaskId, ...response });
+      if (resolved) {
+        this.clearEscrowPreview(orderId);
+        console.log(
+          `[telegram] task ${pendingTaskId} validated from standby reply (order ${orderId})`,
+        );
+        return;
+      }
+    }
+
+    this.pendingEscrowReplies.set(orderId, response);
   }
 
   /** Posts a task to the validator group. Returns the sent message id. */
@@ -203,15 +242,7 @@ export class ValidatorBot {
     // If this reply references standby preview by ORDER_ID, stash it for OrderPaid.
     const standbyOrderId = extractOrderId(msg.reply_to_message?.text);
     if (!taskId && standbyOrderId) {
-      this.pendingEscrowReplies.set(standbyOrderId, {
-        answer: parsed.answer,
-        confidence: parsed.confidence,
-        validator_id: String(msg.from?.id ?? "unknown"),
-        validator_username: msg.from?.username ?? null,
-        raw_message: text,
-        received_at: new Date().toISOString(),
-        message_id: msg.message_id,
-      });
+      this.stashStandbyReply(standbyOrderId, parsed, msg);
       console.log(
         `[telegram] captured standby reply for order ${standbyOrderId} from ${msg.from?.id ?? "unknown"}`,
       );
@@ -220,15 +251,7 @@ export class ValidatorBot {
 
     if (!taskId && this.activePreviewOrderIds.size === 1) {
       const [onlyOrderId] = this.activePreviewOrderIds;
-      this.pendingEscrowReplies.set(onlyOrderId, {
-        answer: parsed.answer,
-        confidence: parsed.confidence,
-        validator_id: String(msg.from?.id ?? "unknown"),
-        validator_username: msg.from?.username ?? null,
-        raw_message: text,
-        received_at: new Date().toISOString(),
-        message_id: msg.message_id,
-      });
+      this.stashStandbyReply(onlyOrderId, parsed, msg);
       console.log(
         `[telegram] captured plain early reply for sole standby order ${onlyOrderId}`,
       );

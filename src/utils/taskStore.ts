@@ -64,6 +64,14 @@ export class TaskStore {
   pendingIds(): string[] {
     return [...this.pending.keys()];
   }
+
+  /** Pending task for a CAP order, if any. */
+  pendingTaskIdForOrder(orderId: string): string | undefined {
+    for (const taskId of this.pending.keys()) {
+      if (this.tasks.get(taskId)?.order_id === orderId) return taskId;
+    }
+    return undefined;
+  }
 }
 
 export const taskStore = new TaskStore();

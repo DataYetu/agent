@@ -86,23 +86,35 @@ export class Orchestrator {
         console.log(
           `[orchestrator] reused standby reply for order ${input.order_id} (task ${taskId})`,
         );
+        this.opts.bot.clearEscrowPreview?.(input.order_id);
         return { task: updated ?? task, validator: captured };
       }
     }
 
     const dispatchedAt = Date.now();
-    try {
-      await this.opts.bot.dispatchTask(taskId, input.query, input.order_id);
-    } catch (err) {
-      taskStore.update(taskId, {
-        status: "FAILED",
-        error: { code: "INTERNAL_ERROR", message: "Telegram dispatch failed" },
-      });
-      throw new OrchestratorError(
-        "INTERNAL_ERROR",
-        `Failed to dispatch task to Telegram: ${(err as Error).message}`,
-        taskId,
-        input.order_id,
+    const previewSent =
+      Boolean(input.order_id) &&
+      typeof this.opts.bot.hasEscrowPreview === "function" &&
+      this.opts.bot.hasEscrowPreview(input.order_id!);
+
+    if (!previewSent) {
+      try {
+        await this.opts.bot.dispatchTask(taskId, input.query, input.order_id);
+      } catch (err) {
+        taskStore.update(taskId, {
+          status: "FAILED",
+          error: { code: "INTERNAL_ERROR", message: "Telegram dispatch failed" },
+        });
+        throw new OrchestratorError(
+          "INTERNAL_ERROR",
+          `Failed to dispatch task to Telegram: ${(err as Error).message}`,
+          taskId,
+          input.order_id,
+        );
+      }
+    } else {
+      console.log(
+        `[orchestrator] standby preview already sent for order ${input.order_id}; skipping duplicate task message`,
       );
     }
 
@@ -128,6 +140,10 @@ export class Orchestrator {
       validator_response: validator,
       latency_ms: latencyMs,
     });
+
+    if (input.order_id) {
+      this.opts.bot.clearEscrowPreview?.(input.order_id);
+    }
 
     return { task: updated ?? task, validator };
   }

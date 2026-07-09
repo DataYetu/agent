@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { TaskStore } from "../src/utils/taskStore.js";
 import type { Task, ValidatorResponse } from "../src/types/index.js";
 
-function makeTask(id: string): Task {
+function makeTask(id: string, orderId?: string): Task {
   const now = new Date().toISOString();
   return {
     task_id: id,
+    order_id: orderId,
     query: "Q?",
     status: "CREATED",
     caller_type: "human",
@@ -75,4 +76,14 @@ test("waitForValidator rejects on timeout", async () => {
 test("resolveValidator returns false when nothing is waiting", () => {
   const store = new TaskStore();
   assert.equal(store.resolveValidator(makeResponse("ghost")), false);
+});
+
+test("pendingTaskIdForOrder finds awaiting task by order id", async () => {
+  const store = new TaskStore();
+  store.create(makeTask("t3", "ord_abc"));
+  const pending = store.waitForValidator("t3", 5000);
+  assert.equal(store.pendingTaskIdForOrder("ord_abc"), "t3");
+  assert.equal(store.pendingTaskIdForOrder("ord_missing"), undefined);
+  store.resolveValidator(makeResponse("t3"));
+  await pending;
 });

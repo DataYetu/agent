@@ -16,6 +16,8 @@ function fakeBot(opts: {
   throwOnDispatch?: boolean;
 }): ValidatorBot {
   return {
+    hasEscrowPreview: () => false,
+    clearEscrowPreview() {},
     async dispatchTask(taskId: string): Promise<number> {
       if (opts.throwOnDispatch) throw new Error("telegram down");
       if (opts.reply !== false) {
@@ -150,6 +152,7 @@ test("handleQuery reuses standby reply captured before order_paid", async () => 
         message_id: 17,
       };
     },
+    clearEscrowPreview() {},
     async dispatchTask(): Promise<number> {
       throw new Error("dispatch should not happen when standby reply exists");
     },
@@ -170,4 +173,32 @@ test("handleQuery reuses standby reply captured before order_paid", async () => 
   assert.equal(task.status, "VALIDATED");
   assert.equal(validator.answer, "Captured from standby");
   assert.equal(task.latency_ms, 0);
+});
+
+test("handleQuery skips duplicate task message when standby preview was sent", async () => {
+  let dispatched = false;
+  const bot = {
+    hasEscrowPreview: () => true,
+    consumeEscrowReply: () => null,
+    clearEscrowPreview() {},
+    async dispatchTask(): Promise<number> {
+      dispatched = true;
+      return 1;
+    },
+  } as unknown as ValidatorBot;
+
+  const orch = new Orchestrator({ bot, validatorTimeoutMs: 20 });
+
+  await assert.rejects(
+    () =>
+      orch.handleQuery({
+        query: "Is maize flour up in Nairobi?",
+        caller_type: "agent",
+        caller_id: "did:croo:agent:test",
+        max_price: 0.1,
+        order_id: "ord_preview",
+      }),
+    (err: unknown) => err instanceof OrchestratorError,
+  );
+  assert.equal(dispatched, false);
 });

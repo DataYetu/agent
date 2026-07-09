@@ -44,17 +44,15 @@ If that works but ECS orders still fail, the duplicate-runtime issue is almost c
 
 ### Act 2 — A2A (second agent)
 1. Register a throwaway **requester** agent on CROO; fund its AA wallet with a little USDC.
-2. Run locally (uses requester SDK key ≠ provider key):
+2. Run locally (uses requester SDK key ≠ provider key). **Pass a real question** — no default/probe text:
 
 ```bash
 cd agent
-CROO_REQUESTER_SDK_KEY=croo_sk_requester... \
-CROO_TARGET_SERVICE_ID=svc-new-1783069024874 \
-npx tsx scripts/a2a-requester.ts "Is maize flour price up in Nairobi this week?"
+npm run a2a -- "Is maize flour price up in Nairobi this week?"
 ```
 
-3. Show terminal: negotiate → pay → delivery JSON.
-4. Optionally reply in Telegram again (or let LLM fallback fire if you want that beat).
+3. One Telegram message per order (standby preview with instructions; no duplicate task post).
+4. Show terminal: negotiate → pay → delivery JSON.
 
 ### Act 3 — Fallback mention (optional 20s)
 - Turn off Telegram briefly or wait past timeout: LLM fallback delivers with lower confidence (`platform: llm`).
