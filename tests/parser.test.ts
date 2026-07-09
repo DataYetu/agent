@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  extractOrderId,
   parseValidatorReply,
   extractTaskId,
   formatTaskMessage,
@@ -57,7 +58,19 @@ test("extractTaskId returns null without a TASK_ID line", () => {
   assert.equal(extractTaskId(undefined), null);
 });
 
-test("formatTaskMessage embeds id, question and instructions", () => {
+test("extractOrderId reads the ORDER_ID from a standby message", () => {
+  assert.equal(
+    extractOrderId("⚡ ...\nORDER_ID: ord_abc123\n\nQuestion:\nHi"),
+    "ord_abc123",
+  );
+});
+
+test("extractOrderId returns null when ORDER_ID is absent", () => {
+  assert.equal(extractOrderId("No order id here"), null);
+  assert.equal(extractOrderId(undefined), null);
+});
+
+test("formatTaskMessage embeds id and question", () => {
   const msg = formatTaskMessage("t1", "Q?");
   assert.match(msg, /TASK_ID: t1/);
   assert.match(msg, /Q\?/);

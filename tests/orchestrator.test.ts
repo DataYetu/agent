@@ -135,3 +135,39 @@ test("handleQuery throws INTERNAL_ERROR when dispatch fails", async () => {
     },
   );
 });
+
+test("handleQuery reuses standby reply captured before order_paid", async () => {
+  const now = new Date().toISOString();
+  const bot = {
+    consumeEscrowReply(orderId: string, taskId: string) {
+      return {
+        task_id: taskId,
+        answer: "Captured from standby",
+        confidence: 0.86,
+        validator_id: "321",
+        raw_message: "Captured from standby | 0.86",
+        received_at: now,
+        message_id: 17,
+      };
+    },
+    async dispatchTask(): Promise<number> {
+      throw new Error("dispatch should not happen when standby reply exists");
+    },
+  } as unknown as ValidatorBot;
+
+  const orch = new Orchestrator({
+    bot,
+    validatorTimeoutMs: 1000,
+  });
+
+  const { task, validator } = await orch.handleQuery({
+    query: "Q?",
+    caller_type: "human",
+    max_price: 0.05,
+    order_id: "ord_standby",
+  });
+
+  assert.equal(task.status, "VALIDATED");
+  assert.equal(validator.answer, "Captured from standby");
+  assert.equal(task.latency_ms, 0);
+});

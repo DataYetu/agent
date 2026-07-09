@@ -74,9 +74,25 @@ export class Orchestrator {
     };
     taskStore.create(task);
 
+    if (input.order_id) {
+      const captured = this.opts.bot.consumeEscrowReply?.(input.order_id, taskId);
+      if (captured) {
+        const updated = taskStore.update(taskId, {
+          status: "VALIDATED",
+          validated_at: captured.received_at,
+          validator_response: captured,
+          latency_ms: 0,
+        });
+        console.log(
+          `[orchestrator] reused standby reply for order ${input.order_id} (task ${taskId})`,
+        );
+        return { task: updated ?? task, validator: captured };
+      }
+    }
+
     const dispatchedAt = Date.now();
     try {
-      await this.opts.bot.dispatchTask(taskId, input.query);
+      await this.opts.bot.dispatchTask(taskId, input.query, input.order_id);
     } catch (err) {
       taskStore.update(taskId, {
         status: "FAILED",

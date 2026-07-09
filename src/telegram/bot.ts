@@ -1,7 +1,12 @@
 import TelegramBot from "node-telegram-bot-api";
 import type { ValidatorResponse } from "../types/index.js";
 import { taskStore } from "../utils/taskStore.js";
-import { extractTaskId, formatTaskMessage, parseValidatorReply } from "./parser.js";
+import {
+  extractOrderId,
+  extractTaskId,
+  formatTaskMessage,
+  parseValidatorReply,
+} from "./parser.js";
 
 export interface TelegramConfig {
   botToken: string;
@@ -19,6 +24,11 @@ export class ValidatorBot {
   private readonly groupId: string;
   private pollingRestartTimer?: NodeJS.Timeout;
   private pollingConflictLogged = false;
+  private readonly pendingEscrowReplies = new Map<
+    string,
+    Omit<ValidatorResponse, "task_id">
+  >();
+  private readonly activePreviewOrderIds = new Set<string>();
 
   constructor(config: TelegramConfig) {
     this.botToken = config.botToken;
@@ -40,17 +50,53 @@ export class ValidatorBot {
     const shortId = orderId.slice(0, 8);
     await this.bot.sendMessage(
       this.groupId,
-      `⚡ CROO order ${shortId}… escrow confirming — stand by\n\nQuestion:\n${query}`,
+      [
+        `⚡ CROO order ${shortId}… escrow confirming — stand by`,
+        `ORDER_ID: ${orderId}`,
+        "",
+        "Question:",
+        query,
+        "",
+        "Reply to this message now in the format:",
+        "<answer> | <confidence (0-1)>",
+        "",
+        "Example:",
+        "Yes, it is cold in Nairobi | 0.85",
+      ].join("\n"),
     );
+    this.activePreviewOrderIds.add(orderId);
     console.log(`[telegram] escrow preview sent for order ${orderId}`);
   }
 
+  /**
+   * Converts a standby preview reply into the canonical task-bound validator response.
+   * Called when OrderPaid arrives after a human has already replied on standby.
+   */
+  consumeEscrowReply(orderId: string, taskId: string): ValidatorResponse | null {
+    const captured = this.pendingEscrowReplies.get(orderId);
+    this.activePreviewOrderIds.delete(orderId);
+    if (!captured) return null;
+    this.pendingEscrowReplies.delete(orderId);
+    return { task_id: taskId, ...captured };
+  }
+
   /** Posts a task to the validator group. Returns the sent message id. */
-  async dispatchTask(taskId: string, query: string): Promise<number> {
+  async dispatchTask(taskId: string, query: string, orderId?: string): Promise<number> {
     console.log(`[telegram] dispatching task ${taskId} to group ${this.groupId}`);
+    const message =
+      orderId && this.activePreviewOrderIds.has(orderId)
+        ? [
+            `TASK_ID: ${taskId}`,
+            "",
+            "Question:",
+            query,
+            "",
+            "Use the same reply format shared above.",
+          ].join("\n")
+        : formatTaskMessage(taskId, query);
     const sent = await this.bot.sendMessage(
       this.groupId,
-      formatTaskMessage(taskId, query),
+      message,
     );
     console.log(
       `[telegram] dispatched task ${taskId} message_id=${sent.message_id} chat=${sent.chat.id}`,
@@ -153,6 +199,41 @@ export class ValidatorBot {
 
     // Primary correlation: reply to the bot's task message (carries TASK_ID).
     let taskId = extractTaskId(msg.reply_to_message?.text);
+
+    // If this reply references standby preview by ORDER_ID, stash it for OrderPaid.
+    const standbyOrderId = extractOrderId(msg.reply_to_message?.text);
+    if (!taskId && standbyOrderId) {
+      this.pendingEscrowReplies.set(standbyOrderId, {
+        answer: parsed.answer,
+        confidence: parsed.confidence,
+        validator_id: String(msg.from?.id ?? "unknown"),
+        validator_username: msg.from?.username ?? null,
+        raw_message: text,
+        received_at: new Date().toISOString(),
+        message_id: msg.message_id,
+      });
+      console.log(
+        `[telegram] captured standby reply for order ${standbyOrderId} from ${msg.from?.id ?? "unknown"}`,
+      );
+      return;
+    }
+
+    if (!taskId && this.activePreviewOrderIds.size === 1) {
+      const [onlyOrderId] = this.activePreviewOrderIds;
+      this.pendingEscrowReplies.set(onlyOrderId, {
+        answer: parsed.answer,
+        confidence: parsed.confidence,
+        validator_id: String(msg.from?.id ?? "unknown"),
+        validator_username: msg.from?.username ?? null,
+        raw_message: text,
+        received_at: new Date().toISOString(),
+        message_id: msg.message_id,
+      });
+      console.log(
+        `[telegram] captured plain early reply for sole standby order ${onlyOrderId}`,
+      );
+      return;
+    }
 
     // Fallback: a plain, well-formed answer with exactly one task outstanding.
     if (!taskId) {

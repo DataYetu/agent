@@ -1,4 +1,5 @@
 const TASK_ID_PREFIX = /TASK_ID:\s*(\S+)/;
+const ORDER_ID_PREFIX = /ORDER_ID:\s*(\S+)/;
 
 export interface ParsedReply {
   answer: string;
@@ -34,6 +35,13 @@ export function extractTaskId(text: string | undefined): string | null {
   return match ? match[1] : null;
 }
 
+/** Extracts the ORDER_ID from a standby preview message. */
+export function extractOrderId(text: string | undefined): string | null {
+  if (!text) return null;
+  const match = ORDER_ID_PREFIX.exec(text);
+  return match ? match[1] : null;
+}
+
 /** Renders the outgoing task message posted to the validator group. */
 export function formatTaskMessage(taskId: string, query: string): string {
   return [
@@ -42,11 +50,7 @@ export function formatTaskMessage(taskId: string, query: string): string {
     "Question:",
     query,
     "",
-    "Instructions:",
-    "Reply to this message in the format:",
+    "Reply in this format:",
     "<answer> | <confidence (0-1)>",
-    "",
-    "Example:",
-    "Yes, prices have increased | 0.9",
   ].join("\n");
 }
