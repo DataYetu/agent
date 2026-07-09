@@ -70,33 +70,25 @@ export function buildErrorResponse(
 }
 
 /**
- * The structured payload delivered to CAP via `deliverOrder`. Includes the
- * answer, confidence, attribution and a hash of the raw validator message as
- * lightweight dispute evidence.
+ * CAP deliverable for CROO Schema services: top-level `status` + `data` envelope.
+ * Evidence hash is nested under metadata for dispute audit without breaking schema.
  */
 export function buildDeliveryPayload(
   task: Task,
   validator: ValidatorResponse,
-): Record<string, unknown> {
-  return {
-    answer: normalizeAnswer(validator.answer),
-    confidence: clampConfidence(validator.confidence),
-    validators: [
-      {
-        id: validator.validator_id,
-        confidence: clampConfidence(validator.confidence),
-        platform: validator.validator_id.startsWith("llm:") ? "llm" : "telegram",
-      },
-    ],
-    task_id: task.task_id,
-    latency_ms: task.latency_ms ?? 0,
-    validated_at: validator.received_at,
-    evidence: {
-      raw_message_hash: hashString(validator.raw_message),
-      message_id: validator.message_id,
-    },
-    timestamp: new Date().toISOString(),
+): AgentSuccessResponse {
+  const response = buildSuccessResponse(task, validator, {
+    amount: String(task.max_price),
+    currency: "USDC",
+    status: "locked",
+    reference: task.order_id ?? task.task_id,
+    order_id: task.order_id,
+  });
+  response.data.metadata.evidence = {
+    raw_message_hash: hashString(validator.raw_message),
+    message_id: validator.message_id,
   };
+  return response;
 }
 
 /** Small non-crypto hash (FNV-1a) for evidence fingerprinting. */

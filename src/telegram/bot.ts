@@ -18,6 +18,7 @@ export class ValidatorBot {
   private readonly botToken: string;
   private readonly groupId: string;
   private pollingRestartTimer?: NodeJS.Timeout;
+  private pollingConflictLogged = false;
 
   constructor(config: TelegramConfig) {
     this.botToken = config.botToken;
@@ -32,6 +33,16 @@ export class ValidatorBot {
     this.bot.on("message", (msg) => this.handleMessage(msg));
     this.bot.on("polling_error", (err) => this.handlePollingError(err));
     console.log(`[telegram] validator bot listening (group=${this.groupId})`);
+  }
+
+  /** Early heads-up while on-chain escrow payment confirms (~seconds before OrderPaid). */
+  async notifyEscrowPending(orderId: string, query: string): Promise<void> {
+    const shortId = orderId.slice(0, 8);
+    await this.bot.sendMessage(
+      this.groupId,
+      `⚡ CROO order ${shortId}… escrow confirming — stand by\n\nQuestion:\n${query}`,
+    );
+    console.log(`[telegram] escrow preview sent for order ${orderId}`);
   }
 
   /** Posts a task to the validator group. Returns the sent message id. */
@@ -57,20 +68,44 @@ export class ValidatorBot {
     try {
       await this.telegramApi("close");
       console.log("[telegram] closed other bot sessions");
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     } catch (err) {
-      console.warn("[telegram] close:", (err as Error).message);
+      const message = (err as Error).message;
+      const retryAfter = /retry after (\d+)/i.exec(message)?.[1];
+      if (retryAfter) {
+        const waitMs = (Number.parseInt(retryAfter, 10) + 2) * 1000;
+        console.warn(`[telegram] close rate-limited; waiting ${retryAfter}s`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        try {
+          await this.telegramApi("close");
+          console.log("[telegram] closed other bot sessions (after rate-limit wait)");
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        } catch (retryErr) {
+          console.warn("[telegram] close:", (retryErr as Error).message);
+        }
+      } else {
+        console.warn("[telegram] close:", message);
+      }
     }
   }
 
   private handlePollingError(err: Error): void {
     console.error("[telegram] polling error:", err.message);
-    if (!/409/.test(err.message) || this.pollingRestartTimer) return;
+    if (!/409/.test(err.message)) return;
 
+    if (!this.pollingConflictLogged) {
+      this.pollingConflictLogged = true;
+      console.error(
+        "[telegram] another runtime is polling this bot token — stop local dev, CROO hosted deploy, or rotate TELEGRAM_BOT_TOKEN",
+      );
+    }
+
+    // One slow retry only; avoid hammering close() (Telegram rate-limits hard).
+    if (this.pollingRestartTimer) return;
     this.pollingRestartTimer = setTimeout(() => {
       this.pollingRestartTimer = undefined;
       void this.restartPollingAfterConflict();
-    }, 5000);
+    }, 120_000);
   }
 
   private async restartPollingAfterConflict(): Promise<void> {

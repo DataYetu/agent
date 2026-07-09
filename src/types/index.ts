@@ -111,6 +111,10 @@ export interface ResponseData {
     timestamp: string;
     caller_type?: CallerType;
     caller_id?: string;
+    evidence?: {
+      raw_message_hash: string;
+      message_id: number;
+    };
   };
   payment: PaymentMetadata;
 }

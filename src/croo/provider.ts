@@ -14,6 +14,7 @@ import { taskStore } from "../utils/taskStore.js";
 /**
  * Wires the CAP order lifecycle to the orchestrator:
  *   NegotiationCreated -> validate + acceptNegotiation
+ *   OrderCreated       -> early Telegram preview (escrow confirming)
  *   OrderPaid          -> dispatch to validators, then deliverOrder
  *   OrderCompleted     -> settlement cleared on-chain
  */
@@ -31,6 +32,9 @@ export class CrooProvider {
 
     stream.on(EventType.NegotiationCreated, (e: Event) => {
       void this.onNegotiationCreated(e);
+    });
+    stream.on(EventType.OrderCreated, (e: Event) => {
+      void this.onOrderCreated(e);
     });
     stream.on(EventType.OrderPaid, (e: Event) => {
       void this.onOrderPaid(e);
@@ -82,6 +86,23 @@ export class CrooProvider {
     } catch (err) {
       console.error(
         `[croo] failed handling negotiation ${negotiationId}:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  private async onOrderCreated(e: Event): Promise<void> {
+    const orderId = e.order_id;
+    if (!orderId) return;
+
+    const request = this.orderQueries.get(orderId);
+    if (!request) return;
+
+    try {
+      await this.orchestrator.notifyEscrowPending(orderId, request.query);
+    } catch (err) {
+      console.warn(
+        `[croo] escrow preview for ${orderId} failed:`,
         (err as Error).message,
       );
     }

@@ -52,6 +52,10 @@ export interface ValidatedTask {
 export class Orchestrator {
   constructor(private readonly opts: OrchestratorOptions) {}
 
+  async notifyEscrowPending(orderId: string, query: string): Promise<void> {
+    await this.opts.bot.notifyEscrowPending(orderId, query);
+  }
+
   async handleQuery(input: HandleQueryInput): Promise<ValidatedTask> {
     const now = new Date().toISOString();
     const taskId = `task_${randomUUID().replace(/-/g, "").slice(0, 16)}`;

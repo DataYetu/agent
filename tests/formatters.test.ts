@@ -81,15 +81,22 @@ test("buildErrorResponse carries code, message and correlation ids", () => {
   assert.equal(res.error.order_id, "ord_1");
 });
 
-test("buildDeliveryPayload is JSON-serializable and includes evidence", () => {
+test("buildDeliveryPayload matches CAP schema envelope (status + data)", () => {
   const { task, validator } = fixture();
   const payload = buildDeliveryPayload(task, validator);
-  const roundTrip = JSON.parse(JSON.stringify(payload));
-  assert.equal(roundTrip.answer, "Yes, prices rose");
-  assert.equal(roundTrip.confidence, 0.91);
-  assert.equal(roundTrip.task_id, "task_1");
-  assert.ok(roundTrip.evidence.raw_message_hash);
-  assert.equal(roundTrip.evidence.message_id, 42);
+  const roundTrip = JSON.parse(JSON.stringify(payload)) as {
+    status: string;
+    data: {
+      answer: string;
+      confidence: number;
+      metadata: { task_id: string; evidence?: { raw_message_hash: string } };
+    };
+  };
+  assert.equal(roundTrip.status, "success");
+  assert.equal(roundTrip.data.answer, "Yes, prices rose");
+  assert.equal(roundTrip.data.confidence, 0.91);
+  assert.equal(roundTrip.data.metadata.task_id, "task_1");
+  assert.ok(roundTrip.data.metadata.evidence?.raw_message_hash);
 });
 
 test("hashString is deterministic and differs for different input", () => {
