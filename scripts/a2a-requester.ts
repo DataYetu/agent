@@ -5,7 +5,7 @@
  *
  *   npm run a2a -- "Is maize flour up in Nairobi this week?"
  */
-import { AgentClient, EventType } from "@croo-network/sdk";
+import { AgentClient, EventType, type Event } from "@croo-network/sdk";
 import "dotenv/config";
 
 const apiUrl = process.env.CROO_API_URL ?? "https://api.croo.network";
@@ -40,6 +40,13 @@ if (/probe|smoke\s*test|^test$/i.test(query)) {
   process.exit(1);
 }
 
+/** Ignore websocket backlog from earlier CLI runs until this session's negotiation is active. */
+function belongsToThisRun(e: Event, activeNegotiationId: string | undefined): boolean {
+  if (!activeNegotiationId) return false;
+  if (e.negotiation_id && e.negotiation_id !== activeNegotiationId) return false;
+  return true;
+}
+
 const client = new AgentClient({ baseURL: apiUrl, wsURL: wsUrl }, sdkKey);
 const stream = await client.connectWebSocket();
 let activeNegotiationId: string | undefined;
@@ -47,9 +54,9 @@ const paidOrderIds = new Set<string>();
 
 stream.on(EventType.OrderCreated, async (e) => {
   if (!e.order_id) return;
-  if (activeNegotiationId && e.negotiation_id !== activeNegotiationId) {
+  if (!belongsToThisRun(e, activeNegotiationId)) {
     console.log(
-      `[a2a] ignoring order ${e.order_id} from stale negotiation ${e.negotiation_id}`,
+      `[a2a] ignoring stale order_created ${e.order_id} (negotiation ${e.negotiation_id ?? "?"})`,
     );
     return;
   }
@@ -66,7 +73,8 @@ stream.on(EventType.OrderCreated, async (e) => {
 
 stream.on(EventType.OrderCompleted, async (e) => {
   if (!e.order_id) return;
-  if (activeNegotiationId && e.negotiation_id && e.negotiation_id !== activeNegotiationId) {
+  if (!belongsToThisRun(e, activeNegotiationId)) {
+    console.log(`[a2a] ignoring stale order_completed ${e.order_id}`);
     return;
   }
   try {
@@ -82,8 +90,10 @@ stream.on(EventType.OrderCompleted, async (e) => {
 });
 
 stream.on(EventType.OrderRejected, (e) => {
-  if (activeNegotiationId && e.negotiation_id && e.negotiation_id !== activeNegotiationId) {
-    console.log(`[a2a] ignoring stale rejection for order ${e.order_id}`);
+  if (!belongsToThisRun(e, activeNegotiationId)) {
+    console.log(
+      `[a2a] ignoring stale order_rejected ${e.order_id} (${e.reason ?? "no reason"})`,
+    );
     return;
   }
   console.error(`[a2a] order rejected: ${e.order_id} ${e.reason ?? ""}`);
@@ -92,6 +102,10 @@ stream.on(EventType.OrderRejected, (e) => {
 });
 
 stream.on(EventType.OrderExpired, (e) => {
+  if (!belongsToThisRun(e, activeNegotiationId)) {
+    console.log(`[a2a] ignoring stale order_expired ${e.order_id}`);
+    return;
+  }
   console.error(`[a2a] order expired: ${e.order_id}`);
   stream.close();
   process.exit(1);

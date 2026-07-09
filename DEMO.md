@@ -52,7 +52,8 @@ npm run a2a -- "Is maize flour price up in Nairobi this week?"
 ```
 
 3. One Telegram message per order (standby preview with instructions; no duplicate task post).
-4. Show terminal: negotiate → pay → delivery JSON.
+4. **Stale websocket events are ignored** — restarting the CLI won't die on an old `order_rejected`.
+5. Show terminal: negotiate → pay → delivery JSON.
 
 ### Act 3 — Fallback mention (optional 20s)
 - Turn off Telegram briefly or wait past timeout: LLM fallback delivers with lower confidence (`platform: llm`).
