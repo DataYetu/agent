@@ -51,6 +51,12 @@ export interface AppConfig {
  * surfaces at boot rather than mid-order.
  */
 export function loadConfig(): AppConfig {
+  const groqKey = process.env.GROQ_API_KEY?.trim() || "";
+  const llmApiKey = process.env.LLM_API_KEY?.trim() || groqKey;
+  const usingGroq = Boolean(groqKey) && !process.env.LLM_API_KEY?.trim();
+  // Auto-enable when a Groq/LLM key is present unless explicitly disabled.
+  const llmEnabledDefault = llmApiKey ? "true" : "false";
+
   return {
     croo: {
       apiUrl: required("CROO_API_URL"),
@@ -66,18 +72,26 @@ export function loadConfig(): AppConfig {
       evictOnStart: optional("TELEGRAM_EVICT_ON_START", "false") === "true",
     },
     runtime: {
-      // 3 minutes by default — humans need breathing room; LLM covers timeouts.
-      validatorTimeoutMs: Number(optional("VALIDATOR_TIMEOUT_MS", "180000")),
+      // 90s default — humans first; Groq/LLM covers timeouts for completion score.
+      validatorTimeoutMs: Number(optional("VALIDATOR_TIMEOUT_MS", "90000")),
       servicePrice: Number(optional("SERVICE_PRICE", "0.05")),
       serviceCurrency: optional("SERVICE_CURRENCY", "USDC"),
       port: Number(optional("PORT", "3000")),
       enableDevEndpoint: optional("ENABLE_DEV_ENDPOINT", "false") === "true",
     },
     llm: {
-      enabled: optional("LLM_FALLBACK_ENABLED", "false") === "true",
-      baseUrl: optional("LLM_BASE_URL", "https://api.openai.com/v1"),
-      apiKey: optional("LLM_API_KEY", ""),
-      model: optional("LLM_MODEL", "gpt-4o-mini"),
+      enabled: optional("LLM_FALLBACK_ENABLED", llmEnabledDefault) === "true",
+      baseUrl: optional(
+        "LLM_BASE_URL",
+        usingGroq || groqKey
+          ? "https://api.groq.com/openai/v1"
+          : "https://api.openai.com/v1",
+      ),
+      apiKey: llmApiKey,
+      model: optional(
+        "LLM_MODEL",
+        usingGroq || groqKey ? "llama-3.3-70b-versatile" : "gpt-4o-mini",
+      ),
       confidence: Number(optional("LLM_FALLBACK_CONFIDENCE", "0.65")),
     },
   };

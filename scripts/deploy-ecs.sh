@@ -57,6 +57,10 @@ if [[ "$SKIP_SECRET_UPLOAD" != "1" ]]; then
         "TELEGRAM_BOT_TOKEN","TELEGRAM_GROUP_ID","VALIDATOR_TIMEOUT_MS",
         "SERVICE_PRICE","SERVICE_CURRENCY","PORT","ENABLE_DEV_ENDPOINT","BASE_RPC_URL"
       ];
+      const optional = [
+        "PROVIDER_FUND_ADDRESS","GROQ_API_KEY","LLM_FALLBACK_ENABLED",
+        "LLM_BASE_URL","LLM_API_KEY","LLM_MODEL","LLM_FALLBACK_CONFIDENCE"
+      ];
       const out = {};
       for (const line of fs.readFileSync(process.argv[1], "utf8").split(/\r?\n/)) {
         const t = line.trim();
@@ -64,11 +68,16 @@ if [[ "$SKIP_SECRET_UPLOAD" != "1" ]]; then
         const i = t.indexOf("=");
         if (i <= 0) continue;
         const k = t.slice(0, i).trim();
-        if (needed.includes(k)) out[k] = t.slice(i + 1);
+        if (needed.includes(k) || optional.includes(k)) out[k] = t.slice(i + 1);
       }
       for (const k of needed) {
         if (!out[k]) { console.error(`Missing .env key: ${k}`); process.exit(1); }
       }
+      // Groq key maps to LLM_API_KEY for the OpenAI-compatible client.
+      if (out.GROQ_API_KEY && !out.LLM_API_KEY) out.LLM_API_KEY = out.GROQ_API_KEY;
+      if (out.GROQ_API_KEY && !out.LLM_BASE_URL) out.LLM_BASE_URL = "https://api.groq.com/openai/v1";
+      if (out.GROQ_API_KEY && !out.LLM_MODEL) out.LLM_MODEL = "llama-3.3-70b-versatile";
+      if (out.GROQ_API_KEY && !out.LLM_FALLBACK_ENABLED) out.LLM_FALLBACK_ENABLED = "true";
       process.stdout.write(JSON.stringify(out));
     ' "$ROOT_DIR/.env"
   )"

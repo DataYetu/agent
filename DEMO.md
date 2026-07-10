@@ -65,9 +65,9 @@ npm run a2a -- "Is maize flour price up in Nairobi this week?"
 
 | Var | Suggested |
 |-----|-----------|
-| `VALIDATOR_TIMEOUT_MS` | `180000` (3 min) or `300000` for live demo |
-| `LLM_FALLBACK_ENABLED` | `true` |
-| `LLM_API_KEY` / `LLM_MODEL` | OpenAI or your inference OpenAI-compatible endpoint |
+| `VALIDATOR_TIMEOUT_MS` | `90000` (1.5 min) — then Groq fallback |
+| `GROQ_API_KEY` | Free Groq key → auto-enables LLM fallback |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` (fast + accurate on Groq) |
 | `LLM_FALLBACK_CONFIDENCE` | `0.65` (below strong human scores) |
 | Service SLA in CROO | ≥ human wait + buffer (e.g. 10–30 min) |
 
