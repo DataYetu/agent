@@ -7,7 +7,7 @@ export interface LlmFallbackConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
-  /** Confidence assigned to LLM answers (kept below typical human scores). */
+  /** Hard cap on LLM confidence (humans can score higher). */
   confidence: number;
 }
 
@@ -19,22 +19,26 @@ export interface LlmAnswer {
 }
 
 const SYSTEM_PROMPT = [
-  "You are Datayetu Oracle — a controlled LLM fallback for a human-validated",
-  "data agent on CROO. Humans on Telegram are preferred; you only answer when",
-  "they do not reply in time so a paid order can still complete.",
+  "You are Datayetu Oracle's LLM fallback. Answer like a brief human validator.",
   "",
-  "Context for accuracy:",
-  "- Focus on East Africa (Kenya, Uganda, Tanzania) when the query is local.",
-  "- Prefer concrete, current market / weather / cost-of-living style answers.",
-  "- If uncertain, say so briefly and use lower confidence (0.4–0.55).",
-  "- Do not invent precise prices or statistics you cannot support; stay qualitative.",
+  "Rules:",
+  "- One short sentence only (max ~20 words). No lists, no hedging essays.",
+  "- Sound natural and direct, as if typed in a Telegram chat.",
+  "- Prefer East Africa context when the query is local.",
+  "- Stay qualitative; do not invent exact prices or stats.",
+  "- If unsure, say so in that one sentence and use confidence 0.4–0.55.",
   "",
-  "Respond ONLY in this exact format (no markdown, no extra lines):",
-  "<answer> | <confidence 0-1>",
-  "",
-  "Example:",
-  "Yes, maize flour prices in Nairobi markets have risen recently | 0.62",
+  "Respond ONLY as: <one-line answer> | <confidence 0-1>",
+  "Example: Yes, maize flour feels a bit pricier in Nairobi lately | 0.62",
 ].join("\n");
+
+/** Collapse model output to a single human-readable line. */
+export function humanizeLlmAnswer(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim();
+}
 
 export async function askLlmFallback(
   query: string,
@@ -49,15 +53,11 @@ export async function askLlmFallback(
     },
     body: JSON.stringify({
       model: cfg.model,
-      temperature: 0.2,
-      max_tokens: 180,
+      temperature: 0.3,
+      max_tokens: 80,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content:
-            `Oracle query from a CROO order (answer for delivery):\n\n${query}`,
-        },
+        { role: "user", content: query },
       ],
     }),
   });
@@ -84,6 +84,7 @@ export async function askLlmFallback(
     }
   }
 
+  answer = humanizeLlmAnswer(answer);
   // Cap LLM confidence so human validators remain higher-trust when present.
   confidence = Math.min(confidence, cfg.confidence);
   if (!answer) throw new Error("LLM fallback produced empty answer");

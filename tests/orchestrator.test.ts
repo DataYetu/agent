@@ -99,7 +99,7 @@ test("handleQuery uses LLM fallback when configured and humans time out", async 
         baseUrl: "https://example.test/v1",
         apiKey: "test",
         model: "demo-model",
-        confidence: 0.65,
+        confidence: 0.7,
       },
     });
 
@@ -110,7 +110,7 @@ test("handleQuery uses LLM fallback when configured and humans time out", async 
     });
 
     assert.equal(validator.answer, "Yes, prices rose");
-    assert.equal(validator.confidence, 0.65);
+    assert.equal(validator.confidence, 0.7);
     assert.equal(validator.validator_id, "llm:demo-model");
   } finally {
     globalThis.fetch = originalFetch;

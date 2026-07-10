@@ -92,7 +92,7 @@ export function loadConfig(): AppConfig {
         "LLM_MODEL",
         usingGroq || groqKey ? "llama-3.3-70b-versatile" : "gpt-4o-mini",
       ),
-      confidence: Number(optional("LLM_FALLBACK_CONFIDENCE", "0.65")),
+      confidence: Number(optional("LLM_FALLBACK_CONFIDENCE", "0.70")),
     },
   };
 }
