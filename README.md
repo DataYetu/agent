@@ -1,41 +1,54 @@
-# Datayetu Agent
+# Datayetu Oracle — CROO Agent
 
-A **CROO-native oracle agent**. It sources real-world, human-validated answers
-through a Telegram validator network and settles payment on-chain via the
-**CROO Agent Protocol (CAP)** — never through manual wallet transfers.
+**Buy human-verified answers to real-world questions. Confidence-scored,
+on-chain, agent-callable.**
 
-- **A2A + H2A**: callable by other agents or by humans through CROO.
-- **Human-grounded**: every answer comes from a real validator, with a
-  confidence score.
+Datayetu Oracle is a **CROO-native oracle agent**. It sources real-world answers
+from a **Telegram human-validator network**, returns a **structured,
+confidence-scored** result, and settles payment **on-chain via the CROO Agent
+Protocol (CAP)** — never through manual wallet transfers.
+
+- **A2A + H2A**: callable programmatically by other agents *and* by humans via
+  the CROO Navigator / Agent Store — one fulfillment pipeline.
+- **Human-grounded, with SLA safety**: every answer comes from a real validator
+  with a confidence score; an optional, **controlled LLM fallback** (capped
+  confidence, `platform: "llm"`) keeps paid orders inside SLA if humans time out.
 - **CAP-settled**: `Negotiate → Lock → Deliver → Clear`; payment metadata is
-  derived from CAP events, not fabricated.
+  derived from CAP events and settlement tx, not fabricated.
 
-Full specification: [`../docs/DATAYETU-ORACLE-CROO-SPEC.md`](../docs/DATAYETU-ORACLE-CROO-SPEC.md)
+**Docs:** [Architecture guide](ARCHITECTURE.md) · [Demo runbook](DEMO.md)
 
 ## Architecture
 
+![Datayetu Oracle architecture](docs/assets/architecture.png)
+
+See the full **[Architecture guide](ARCHITECTURE.md)** for provider + requester
+sequence diagrams and the CAP lifecycle mapping.
+
 ```
 CROO caller (H2A / A2A)
-   │  negotiate + pay (CAP escrow)
+   │  negotiate + pay (CAP escrow, USDC on Base)
    ▼
 CrooProvider ──► Orchestrator ──► ValidatorBot ──► Telegram group
-   ▲                                   │
-   │        validator reply            ▼
-   └──── deliverOrder (proof) ◄── Orchestrator (normalize)
+   ▲                                   │   (human reply, or LLM fallback on timeout)
+   │        validated answer           ▼
+   └──── deliverOrder (proof) ◄── Orchestrator (normalize + attribute)
    │
    ▼
-CAP clear → on-chain settlement
+CAP verify → clear → on-chain settlement
 ```
 
 | Path | Module |
 |------|--------|
-| CAP event loop | `src/croo/provider.ts`, `src/croo/client.ts` |
+| CAP event loop (provider + requester) | `src/croo/provider.ts`, `src/croo/client.ts` |
 | Core engine | `src/core/orchestrator.ts` |
 | Human validation | `src/telegram/bot.ts`, `src/telegram/parser.ts` |
+| LLM fallback (SLA safety) | `src/utils/llmFallback.ts` |
 | Async wait + task state | `src/utils/taskStore.ts` |
-| Response shaping | `src/utils/formatters.ts` |
+| Response shaping + proof | `src/utils/formatters.ts` |
 | Schemas / types | `src/types/index.ts` |
 | HTTP (health + dev) | `src/api/agent.ts` |
+| A2A requester (demo/tests) | `scripts/a2a-requester.ts` (`npm run a2a`) |
 
 ## Prerequisites
 
@@ -146,10 +159,11 @@ SKIP_SECRET_UPLOAD=1 IMAGE_TAG=$(git rev-parse HEAD) \
 
 | CAP event | Agent action |
 |-----------|--------------|
-| `NegotiationCreated` | Validate `requirements`, check price, `acceptNegotiation` |
-| `OrderPaid` | Dispatch query to Telegram, await validator, `deliverOrder` |
-| `OrderCompleted` | Log settlement (payment cleared on-chain) |
-| timeout / failure | `rejectOrder` with reason |
+| `NegotiationCreated` | Validate `requirements`, check price, `acceptNegotiation` (or `acceptNegotiationWithFundAddress` if the service requires fund transfer) |
+| `OrderPaid` | Dispatch query to Telegram, await human validator, `deliverOrder` |
+| human timeout | If LLM fallback configured → answer via model (capped confidence, `platform: "llm"`) and `deliverOrder`; else `rejectOrder` (escrow returns) |
+| `OrderCompleted` | Settlement cleared on-chain; finalize payment metadata |
+| bad input / dispatch failure | `rejectOrder` with reason |
 
 Requesters send the query as the order **`requirements`** JSON string, e.g.:
 
@@ -224,6 +238,22 @@ curl -X POST http://localhost:3000/agent/query \
 This exercises the Telegram loop and returns a structured response with
 `payment.status: "pending"` (real settlement requires the CAP path).
 
+## A2A: call the agent from another agent (real on-chain order)
+
+`scripts/a2a-requester.ts` acts as a second CROO agent that negotiates, pays,
+and reads the delivery — proving A2A composability end-to-end.
+
+```bash
+# Requires a SECOND CROO agent (requester) SDK-Key with a funded USDC AA wallet
+# on Base, set in .env (see script header for the exact vars it reads).
+cd agent
+npm run a2a -- "Is maize flour price up in Nairobi this week?"
+```
+
+Flow: `negotiateOrder → payOrder → OrderCompleted → getDelivery` — printed as
+the structured oracle response. Use a distinct requester key (≠ provider key)
+and pass a real question.
+
 ## Testing strategy (recommended)
 
 1. **Local CAP-connected test first**  
@@ -262,19 +292,6 @@ so you can dry-run behavior and catch regressions as the code changes.
 ## Environment variables
 
 See [`.env.example`](.env.example).
-
-## Hackathon submission (CROO Agent Hackathon)
-
-Built for the [CROO Agent Hackathon](https://dorahacks.io/hackathon/croo-hackathon).
-Status against the five mandatory requirements:
-
-| # | Requirement | Status |
-|---|-------------|--------|
-| 1 | Listed on CROO Agent Store | Operational — register the service + list via the CROO Dashboard |
-| 2 | Integrated with CAP (callable, settles on-chain) | Done in code (`src/croo/`); needs SDK-Key + funded AA wallet to run live |
-| 3 | Open source, permissive license | Done — MIT ([`LICENSE`](LICENSE)) |
-| 4 | Demo video + README (setup, SDK methods, integration notes) | README done; **record ≤5-min demo video** |
-| 5 | BUIDL filed on DoraHacks | Operational — submit before the deadline |
 
 ## License
 
