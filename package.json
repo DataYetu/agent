@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "tsx --test tests/*.test.ts",
-    "a2a": "tsx scripts/a2a-requester.ts"
+    "a2a": "tsx scripts/a2a-requester.ts",
+    "pay": "tsx scripts/pay-orders.ts"
   },
   "keywords": [
     "croo",

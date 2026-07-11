@@ -5,11 +5,17 @@
  *
  *   npm run a2a -- "Is maize flour up in Nairobi this week?"
  */
-import { AgentClient, EventType, type Event } from "@croo-network/sdk";
+import {
+  AgentClient,
+  EventType,
+  InsufficientBalanceError,
+  type Event,
+} from "@croo-network/sdk";
 import "dotenv/config";
 
 const apiUrl = process.env.CROO_API_URL ?? "https://api.croo.network";
 const wsUrl = process.env.CROO_WS_URL ?? "wss://api.croo.network/ws";
+const rpcUrl = process.env.BASE_RPC_URL?.trim() || undefined;
 const sdkKey =
   process.env.CROO_REQUESTER_SDK_KEY ?? process.env.CROO_A2A_TESTER_SDK_KEY;
 const serviceId = process.env.CROO_TARGET_SERVICE_ID ?? process.env.CROO_SERVICE_ID;
@@ -40,6 +46,26 @@ if (/probe|smoke\s*test|^test$/i.test(query)) {
   process.exit(1);
 }
 
+/**
+ * Pay via the raw REST endpoint, skipping the SDK's ethers balance pre-check.
+ * `payOrder()` runs `checkERC20Balance` (a `JsonRpcProvider` call) before the
+ * actual pay; that pre-check can hang ("failed to detect network" / TIMEOUT) on
+ * some networks even when the wallet is funded and CROO is reachable.
+ */
+async function directPay(
+  orderId: string,
+): Promise<{ txHash?: string; status?: string }> {
+  const resp = await fetch(`${apiUrl}/backend/v1/orders/${orderId}/pay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-SDK-Key": sdkKey! },
+    body: "{}",
+  });
+  const text = await resp.text();
+  if (resp.status >= 400) throw new Error(`pay HTTP ${resp.status}: ${text}`);
+  const parsed = text ? JSON.parse(text) : {};
+  return { txHash: parsed.txHash, status: parsed.order?.status };
+}
+
 /** Ignore websocket backlog from earlier CLI runs until this session's negotiation is active. */
 function belongsToThisRun(e: Event, activeNegotiationId: string | undefined): boolean {
   if (!activeNegotiationId) return false;
@@ -47,7 +73,11 @@ function belongsToThisRun(e: Event, activeNegotiationId: string | undefined): bo
   return true;
 }
 
-const client = new AgentClient({ baseURL: apiUrl, wsURL: wsUrl }, sdkKey);
+const client = new AgentClient(
+  { baseURL: apiUrl, wsURL: wsUrl, ...(rpcUrl ? { rpcURL: rpcUrl } : {}) },
+  sdkKey,
+);
+if (rpcUrl) console.log(`[a2a] using Base RPC ${rpcUrl}`);
 const stream = await client.connectWebSocket();
 let activeNegotiationId: string | undefined;
 const paidOrderIds = new Set<string>();
@@ -67,7 +97,24 @@ stream.on(EventType.OrderCreated, async (e) => {
     const paid = await client.payOrder(e.order_id);
     console.log(`[a2a] paid tx=${paid.txHash}`);
   } catch (err) {
-    console.error(`[a2a] pay failed: ${(err as Error).message}`);
+    const msg = (err as Error).message;
+    if (err instanceof InsufficientBalanceError) {
+      console.error(`[a2a] pay failed: insufficient balance — fund the requester AA wallet. ${msg}`);
+      return;
+    }
+    // The ethers balance pre-check couldn't reach the RPC (not a funds problem).
+    // Fall back to paying via the REST endpoint directly.
+    if (/timeout|failed to detect network|ECONN|fetch failed|ETIMEDOUT|network/i.test(msg)) {
+      console.warn(`[a2a] balance pre-check unreachable (${msg}); paying via API directly...`);
+      try {
+        const paid = await directPay(e.order_id);
+        console.log(`[a2a] paid (direct) status=${paid.status ?? "?"} tx=${paid.txHash ?? "(pending)"}`);
+      } catch (err2) {
+        console.error(`[a2a] direct pay failed: ${(err2 as Error).message}`);
+      }
+      return;
+    }
+    console.error(`[a2a] pay failed: ${msg}`);
   }
 });
 
